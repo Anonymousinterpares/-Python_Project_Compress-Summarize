@@ -1,4 +1,4 @@
-# -Python_Project_Compress-Summarize
+# -Python_Project_Compress-Summarize v. 0.5
 
 ==================================================
 PROJECT GENERAL OVERVIEW:
