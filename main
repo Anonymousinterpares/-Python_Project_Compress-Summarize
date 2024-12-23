@@ -46,13 +46,37 @@ if openai.__version__ < "1.0.0":
 import google.generativeai as genai # Import the google generativeai library
 from gui_layout import init_project_manager_ui, init_api_settings_ui, apply_stylesheet # Import the layout functions
 
+def get_base_dir():
+    """
+    Determine the base directory of the applications.
+
+    This function checks if the application is running as a bundled executable
+    (e.g., created with PyInstaller) or as a regular Python script. It returns
+    the appropriate base directory path.
+
+    Returns:
+        str: The base directory path.
+    """
+    if getattr(sys, 'frozen', False) and hasattr(sys, '_MEIPASS'):
+        # Running as bundled executable
+        return sys._MEIPASS
+    else:
+        # Running as a script
+        return os.path.dirname(os.path.abspath(__file__))
 def setup_logging():
     """Sets up logging configuration for the application.
     Creates a logs directory if it doesn't exist and configures both file and console logging."""
-    script_dir = os.path.dirname(os.path.abspath(__file__))  # Get the directory of the script
-    log_dir = os.path.join(script_dir, "logs")  # Create a logs subdirectory
-    if not os.path.exists(log_dir):
-        os.makedirs(log_dir)
+    log_dir = os.path.join(get_base_dir(), "logs")
+    try:
+        if not os.path.exists(log_dir):
+            os.makedirs(log_dir)
+    except Exception as e:
+        logging.error(f"Error creating logs directory: {e}")
+        # Fallback to using a temporary directory if creating 'logs' fails
+        log_dir = os.path.join(tempfile.gettempdir(), "ProjectManager_logs")
+        if not os.path.exists(log_dir):
+            os.makedirs(log_dir, exist_ok=True)
+        print(f"Using temporary directory for logs: {log_dir}")
 
     log_file = os.path.join(log_dir, "dev_manager.log")
 
@@ -78,70 +102,91 @@ def setup_logging():
 
 setup_logging()
 
+
+
 def load_api_settings():
     """Load API settings and other persistent data from settings.json."""
+    settings_path = os.path.join(get_base_dir(), "settings.json")
+    default_settings = {"recent_paths": {"project": "", "doc": ""}}
+
     try:
-        script_dir = os.path.dirname(os.path.abspath(__file__))
-        settings_path = os.path.join(script_dir, "settings.json")
+        if not os.path.exists(settings_path):
+            logging.warning("settings.json not found. Starting with default settings.")
+            return default_settings
+
         with open(settings_path, "r") as f:
             settings = json.load(f)
             # Ensure default structure for recent paths
             if "recent_paths" not in settings:
-                settings["recent_paths"] = {"project": "", "doc": ""}
+                settings["recent_paths"] = default_settings["recent_paths"]
             return settings
-    except FileNotFoundError:
-        logging.warning("settings.json not found. Starting with default settings.")
-        return {"recent_paths": {"project": "", "doc": ""}}
     except json.JSONDecodeError:
         logging.error("Error decoding settings.json. Please check the file format.")
         QMessageBox.warning(None, "Settings Error", "Error reading settings file. Starting with default settings.")
-        return {"recent_paths": {"project": "", "doc": ""}}
+        return default_settings
     except Exception as e:
         logging.error(f"Unexpected error loading settings: {e}")
         QMessageBox.critical(None, "Settings Error", f"Failed to load settings: {e}")
-        return {"recent_paths": {"project": "", "doc": ""}}
-
+        return default_settings
+    
 class APISettingsDialog(QDialog):
     """Dialog for editing API settings."""
-class AppSettingsDialog(QDialog):
-    """Dialog for editing application settings."""
-    def __init__(self, settings):
-        """
-        Initializes the application settings dialog.
+    def __init__(self, settings, parent=None):
+        """Initialize the API settings dialog.
 
         Args:
-            settings (dict): The current application settings.
+            settings (dict): The current API settings.
+            parent (QWidget, optional): The parent widget. Defaults to None.
         """
-        super().__init__()
-        self.app_settings = settings
+        super().__init__(parent)
+        self.api_settings = settings  # Use the passed settings
         apply_stylesheet(self)
-        self.setWindowTitle('Application Settings')
-        self.setGeometry(200, 200, 400, 200)
+        self.setWindowTitle('API Settings')
+        self.setGeometry(200, 200, 400, 300)
 
         main_layout = QVBoxLayout()
 
-        # Output Format
-        format_group = QGroupBox("Output Format")
-        format_layout = QVBoxLayout()
-        self.docx_radio = QRadioButton("DOCX")
-        self.txt_radio = QRadioButton("TXT")
-        if self.app_settings.get("output_format") == "docx":
-            self.docx_radio.setChecked(True)
-        else:
-            self.txt_radio.setChecked(True)
-        format_layout.addWidget(self.docx_radio)
-        format_layout.addWidget(self.txt_radio)
-        format_group.setLayout(format_layout)
-        main_layout.addWidget(format_group)
+        provider_group = QGroupBox("Provider Settings")
+        provider_layout = QVBoxLayout()
 
-        # LLM Temperature
-        temp_group = QGroupBox("LLM Temperature")
+        # Provider Selection
+        provider_label = QLabel("Provider:")
+        self.provider_combobox = QComboBox()
+        self.provider_combobox.addItems(["OpenAI", "Google"])
+        self.provider_combobox.currentTextChanged.connect(self.update_api_fields)
+        provider_layout.addWidget(provider_label)
+        provider_layout.addWidget(self.provider_combobox)
+        provider_group.setLayout(provider_layout)
+        main_layout.addWidget(provider_group)
+
+        # API Key
+        api_group = QGroupBox("API Key")
+        api_layout = QVBoxLayout()
+        self.api_key_label = QLabel("API Key:")
+        self.api_key_edit = QLineEdit()
+        api_layout.addWidget(self.api_key_label)
+        api_layout.addWidget(self.api_key_edit)
+        api_group.setLayout(api_layout)
+        main_layout.addWidget(api_group)
+
+        # Model Selection
+        model_group = QGroupBox("Model Selection")
+        model_layout = QVBoxLayout()
+        model_label = QLabel("Model:")
+        self.model_combobox = QComboBox()
+        model_layout.addWidget(model_label)
+        model_layout.addWidget(self.model_combobox)
+        model_group.setLayout(model_layout)
+        main_layout.addWidget(model_group)
+
+        # Temperature
+        temp_group = QGroupBox("Temperature")
         temp_layout = QVBoxLayout()
         temperature_label = QLabel("Temperature (0.0 - 1.0):")
         self.temperature_slider = QSlider(Qt.Horizontal)
         self.temperature_slider.setMinimum(0)
         self.temperature_slider.setMaximum(100)
-        self.temperature_slider.setValue(int(self.app_settings.get("llm_temperature", 0.7) * 100))
+        self.temperature_slider.setValue(70)  # Default value
         self.temperature_slider.valueChanged.connect(self.update_temperature_display)
         self.temperature_display_label = QLabel(f"{self.temperature_slider.value() / 100:.2f}")
         temp_layout.addWidget(temperature_label)
@@ -152,34 +197,35 @@ class AppSettingsDialog(QDialog):
         temp_group.setLayout(temp_layout)
         main_layout.addWidget(temp_group)
 
-        # Tree View Selection
-        treeview_group = QGroupBox("Tree View Selection")
-        treeview_layout = QVBoxLayout()
-        self.recursive_selection_check = QCheckBox("Recursive Selection")
-        self.recursive_selection_check.setChecked(self.app_settings.get("recursive_selection", True))
-        treeview_layout.addWidget(self.recursive_selection_check)
-        treeview_group.setLayout(treeview_layout)
-        main_layout.addWidget(treeview_group)
-
         # Buttons
         button_layout = QHBoxLayout()
         save_button = QPushButton("Save")
         save_button.setIcon(QIcon("icons/save.png"))
         save_button.clicked.connect(self.save_settings)
+        reset_button = QPushButton("Reset")
+        reset_button.setIcon(QIcon("icons/reset.png"))
+        reset_button.clicked.connect(self.reset_settings)
         cancel_button = QPushButton("Cancel")
         cancel_button.setIcon(QIcon("icons/cancel.png"))
         cancel_button.clicked.connect(self.reject)
         button_layout.addWidget(save_button)
+        button_layout.addWidget(reset_button)
         button_layout.addWidget(cancel_button)
         main_layout.addLayout(button_layout)
 
         self.setLayout(main_layout)
+        # Load settings for the default provider
+        self.provider_combobox.setCurrentText("OpenAI")
+        # Force initial update for OpenAI
+        self.update_api_fields("OpenAI")
+        self.load_settings_for_provider("OpenAI") # Load settings after UI is set up
 
     def update_temperature_display(self, value):
         """Updates the temperature display label."""
         self.temperature_display_label.setText(f"{value / 100:.2f}")
 
     def update_api_fields(self, provider_text):
+        """Updates the API key label and model choices based on the selected provider."""
         print(f"Updating API fields for provider: {provider_text}")  # Debug print
         self.api_key_label.setText(f"{provider_text} API Key:")
         self.api_key_edit.clear()
@@ -191,6 +237,7 @@ class AppSettingsDialog(QDialog):
         print(f"Model combobox items: {[self.model_combobox.itemText(i) for i in range(self.model_combobox.count())]}") # Debug print
 
     def load_settings_for_provider(self, provider):
+        """Loads the settings for the specified provider."""
         provider_settings = self.api_settings.get(provider.lower(), {})
         api_key = provider_settings.get("api_key", "")
         if api_key:
@@ -200,75 +247,41 @@ class AppSettingsDialog(QDialog):
         self.model_combobox.setCurrentText(provider_settings.get("model", ""))
 
     def save_settings(self):
-        """Saves the application settings to settings.json."""
-        self.app_settings["output_format"] = "docx" if self.docx_radio.isChecked() else "txt"
-        self.app_settings["llm_temperature"] = self.temperature_slider.value() / 100
-        self.app_settings["recursive_selection"] = self.recursive_selection_check.isChecked()
+        """Save the API settings."""
+        provider = self.provider_combobox.currentText().lower()
+        api_key = self.api_key_edit.text()
+        temperature = self.temperature_slider.value() / 100
+        model = self.model_combobox.currentText()
+
+        # Update the settings for the current provider
+        self.api_settings[provider] = {
+            "api_key": api_key,
+            "temperature": temperature,
+            "model": model
+        }
 
         try:
-            script_dir = os.path.dirname(os.path.abspath(__file__))
-            settings_path = os.path.join(script_dir, "settings.json")
+            settings_path = os.path.join(get_base_dir(), "settings.json")
             with open(settings_path, "w") as f:
-                json.dump(self.app_settings, f, indent=4)
-            QMessageBox.information(self, "Settings Saved", "Application settings saved successfully.")
-            self.accept()
+                json.dump(self.api_settings, f, indent=4)
+            QMessageBox.information(self, "Settings Saved", "API settings saved successfully.")
+            self.accept()  # Close the dialog
         except Exception as e:
-            logging.error(f"Error saving application settings: {e}")
-            QMessageBox.critical(self, "Error", f"Error saving application settings: {e}")
+            QMessageBox.critical(self, "Error", f"Error saving settings: {e}")
 
     def reset_settings(self):
-        """Reset the API settings for the current provider."""
-        provider = self.provider_combobox.currentText()
-        reply = QMessageBox.warning(
-            self, "Warning",
-            f"Are you sure you want to reset the API settings for {provider}?\nThis action is irreversible.",
-            QMessageBox.Yes | QMessageBox.Cancel
-        )
-        if reply == QMessageBox.Yes:
-            if provider.lower() in self.api_settings:
-                del self.api_settings[provider.lower()]
-                try:
-                    script_dir = os.path.dirname(os.path.abspath(__file__))
-                    settings_path = os.path.join(script_dir, "settings.json")
-                    with open(settings_path, "w") as f:
-                        json.dump(self.api_settings, f, indent=4)
-                    QMessageBox.information(self, "Settings Reset", f"{provider} API settings have been reset.")
-                    self.load_settings_for_provider(provider) # Clear the fields
-                    # Clear the displayed API key
-                    self.api_key_edit.clear()
-                    self.temperature_slider.setValue(70) # Reset temperature slider
-                    self.model_combobox.setCurrentIndex(-1) # Reset model combobox
-                except Exception as e:
-                    QMessageBox.critical(self, "Error", f"Error resetting settings: {e}")
-            else:
-                QMessageBox.information(self, "No Settings", f"No settings found for {provider}.")
+        """Resets the API settings for the current provider."""
+        provider = self.provider_combobox.currentText().lower()
+        if provider in self.api_settings:
+            del self.api_settings[provider]
+            self.load_settings_for_provider(provider)
+            self.api_key_edit.clear()
+            self.temperature_slider.setValue(70)
+            self.model_combobox.setCurrentIndex(-1)
+            QMessageBox.information(self, "Settings Reset", f"{provider.capitalize()} API settings have been reset.")
+        else:
+            QMessageBox.information(self, "No Settings", f"No settings found for {provider}.")
 
-    def reset_settings(self):
-        """Reset the API settings for the current provider."""
-        provider = self.provider_combobox.currentText()
-        reply = QMessageBox.warning(
-            self, "Warning",
-            f"Are you sure you want to reset the API settings for {provider}?\nThis action is irreversible.",
-            QMessageBox.Yes | QMessageBox.Cancel
-        )
-        if reply == QMessageBox.Yes:
-            if provider.lower() in self.api_settings:
-                del self.api_settings[provider.lower()]
-                try:
-                    script_dir = os.path.dirname(os.path.abspath(__file__))
-                    settings_path = os.path.join(script_dir, "settings.json")
-                    with open(settings_path, "w") as f:
-                        json.dump(self.api_settings, f, indent=4)
-                    QMessageBox.information(self, "Settings Reset", f"{provider} API settings have been reset.")
-                    self.load_settings_for_provider(provider) # Clear the fields
-                    # Clear the displayed API key
-                    self.api_key_edit.clear()
-                    self.temperature_slider.setValue(70) # Reset temperature slider
-                    self.model_combobox.setCurrentIndex(-1) # Reset model combobox
-                except Exception as e:
-                    QMessageBox.critical(self, "Error", f"Error resetting settings: {e}")
-            else:
-                QMessageBox.information(self, "No Settings", f"No settings found for {provider}.")
 
 class ProjectManagerGUI(QMainWindow):
     """Main application window for the Project Manager."""
@@ -282,8 +295,20 @@ class ProjectManagerGUI(QMainWindow):
                 logging.error("QApplication was not initialized properly.")
                 sys.exit(1)
 
+            self.base_dir = get_base_dir() 
+            self.icons_dir = os.path.join(self.base_dir, "icons")
+            # Determine the base directory early on
+            if getattr(sys, 'frozen', False) and hasattr(sys, '_MEIPASS'):
+                self.base_dir = sys._MEIPASS
+                print(f"Running from executable: {self.base_dir}") # Debug print
+            else:
+                self.base_dir = os.path.dirname(os.path.abspath(__file__))
+                print(f"Running from script: {self.base_dir}") # Debug print
+
+            self.icons_dir = os.path.join(self.base_dir, "icons")
+
             self.api_settings = load_api_settings()
-            self.load_app_settings()
+            self.load_app_settings() # Now load_app_settings() can be called safely after base_dir is defined
             # Load recent paths from settings
             self.recent_project_path = self.api_settings.get("recent_paths", {}).get("project", "")
             self.recent_doc_path = self.api_settings.get("recent_paths", {}).get("doc", "")
@@ -305,11 +330,16 @@ class ProjectManagerGUI(QMainWindow):
 
             self.selected_files_for_compression = []
 
-            self.icons_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "icons")
-
             self._init_menu()
             self._init_buttons()
             self._init_connections()
+
+            # Set the window icon
+            icon_path = os.path.join(self.icons_dir, "app_icon.png")  # Replace "app_icon.png" with your icon file
+            if os.path.exists(icon_path):
+                self.setWindowIcon(QIcon(icon_path))
+            else:
+                logging.warning(f"Application icon not found: {icon_path}")
 
             # Connect the tree view's selection model's selectionChanged signal
             self.project_tree_view.selectionModel().selectionChanged.connect(self.on_tree_selection_changed)
@@ -327,14 +357,19 @@ class ProjectManagerGUI(QMainWindow):
     def load_app_settings(self):
         """Loads application settings from settings.json, or sets default values."""
         default_settings = {
-            "output_format": "txt",  # Default output format
-            "llm_temperature": 0.7,  # Default temperature for LLMs
-            "recursive_selection": True # Default tree view selection mode
+            "output_format": "txt",
+            "llm_temperature": 0.7,
+            "recursive_selection": True
         }
 
         try:
-            script_dir = os.path.dirname(os.path.abspath(__file__))
-            settings_path = os.path.join(script_dir, "settings.json")
+            settings_path = os.path.join(self.base_dir, "settings.json")
+            if not os.path.exists(settings_path):
+                # Create a new settings.json file if it doesn't exist
+                with open(settings_path, "w") as f:
+                    json.dump(default_settings, f, indent=4)
+                logging.info("New settings.json file created.")
+
             with open(settings_path, "r") as f:
                 self.app_settings = json.load(f)
 
@@ -343,8 +378,9 @@ class ProjectManagerGUI(QMainWindow):
                 if key not in self.app_settings:
                     self.app_settings[key] = value
 
-        except FileNotFoundError:
-            logging.warning("settings.json not found. Using default settings.")
+        except (FileNotFoundError, PermissionError) as e:
+            logging.error(f"Error accessing settings.json: {e}")
+            QMessageBox.critical(self, "Error", f"Could not access settings file: {e}")
             self.app_settings = default_settings
         except json.JSONDecodeError:
             logging.error("Error decoding settings.json. Using default settings.")
@@ -396,6 +432,22 @@ class ProjectManagerGUI(QMainWindow):
         self.process_button.clicked.connect(self.process_project)
         self.update_action_state()
 
+        # Connect the stateChanged signal of the checkbox to the new slot function
+        self.use_llm_check.stateChanged.connect(self.update_llm_options_state)
+
+        # Set the initial state of the LLM options based on the checkbox
+        self.update_llm_options_state(self.use_llm_check.checkState())
+
+    def update_llm_options_state(self, state):
+        """Enables or disables LLM options based on the checkbox state."""
+        enabled = state == Qt.Checked
+        self.none_radio.setEnabled(enabled)
+        self.openai_radio.setEnabled(enabled)
+        self.google_radio.setEnabled(enabled)
+        self.general_radio.setEnabled(enabled)
+        self.detailed_radio.setEnabled(enabled)
+        self.llm_info_button.setEnabled(enabled)
+        
     def show_app_settings_dialog(self):
         """Displays a dialog for editing application settings."""
         dialog = AppSettingsDialog(self.app_settings)
@@ -451,17 +503,22 @@ class ProjectManagerGUI(QMainWindow):
         <h3>OpenAI Models</h3>
         <p>OpenAI offers powerful models like GPT-4o, GPT-4, and GPT-3.5-turbo. These models are excellent for understanding code and generating human-readable text.</p>
         <ul>
-            <li><b>gpt-4o:</b> OpenAI's newest flagship model.</li>
+            <li><b>gpt-4o:</b> OpenAI's newest flagship model, designed for enhanced performance across text, vision, and audio.</li>
+            <li><b>gpt-4o-mini:</b> A smaller, faster variant of gpt-4o, suitable for applications requiring quick responses.</li>
             <li><b>gpt-4:</b> A very capable model with a good balance of performance and cost. Ideal for complex projects.</li>
             <li><b>gpt-3.5-turbo:</b> A faster and more cost-effective model, suitable for smaller to medium-sized projects.</li>
+            <li><b>gpt-4-turbo:</b> An optimized version of GPT-4, offering faster processing speeds and improved efficiency.</li>
         </ul>
         <p><b>Note:</b> OpenAI models have context window limits. For very large projects, you might need to consider the amount of code being processed at once.</p>
 
         <h3>Google Models</h3>
-        <p>Google's Gemini models, such as gemini-pro and models/gemini-2.0-flash-exp, are designed for various generative tasks, including code understanding and documentation.</p>
+        <p>Google's Gemini models are designed for various generative tasks, including code understanding and documentation.</p>
         <ul>
-            <li><b>gemini-pro:</b> A balanced model suitable for a wide range of tasks.</li>
-            <li><b>models/gemini-2.0-flash-exp:</b> Designed for speed and efficiency.</li>
+            <li><b>gemini-1.5-pro:</b> A robust model capable of handling a wide range of tasks with high accuracy.</li>
+            <li><b>gemini-exp-1206:</b> An experimental model designed for specific applications, offering unique capabilities.</li>
+            <li><b>gemini-1.5-flash:</b> A faster variant of gemini-1.5-pro, optimized for speed.</li>
+            <li><b>gemini-2.0-flash-exp:</b> An advanced experimental model with enhanced features and performance.</li>
+            <li><b>learnlm-1.5-pro-experimental:</b> An experimental model focused on learning and adapting to new tasks efficiently.</li>
         </ul>
         <p><b>Key Advantage:</b> Google models generally offer larger context windows, making them well-suited for processing extensive codebases without losing context.</p>
 
@@ -551,12 +608,13 @@ class ProjectManagerGUI(QMainWindow):
                 "doc": self.recent_doc_path
             }
 
-            # Save settings.json in the same directory as the script
-            script_dir = os.path.dirname(os.path.abspath(__file__))
-            settings_path = os.path.join(script_dir, "settings.json")
+            settings_path = os.path.join(self.base_dir, "settings.json")
             with open(settings_path, "w") as f:
                 json.dump(self.api_settings, f, indent=4)
             logging.info("Settings saved successfully on close.")
+        except (FileNotFoundError, PermissionError) as e:
+            logging.error(f"Error saving settings on close: {e}")
+            QMessageBox.critical(self, "Error", f"Could not save settings on close. Check file permissions: {e}")
         except Exception as e:
             logging.error(f"Error saving settings on close: {e}")
             QMessageBox.critical(self, "Error", f"Error saving settings: {e}")
@@ -876,16 +934,19 @@ Do not comment on code issues, errors or potential for expansion. Provide a grap
 
     def show_api_settings(self):
         """Display the API settings dialog."""
-        dialog = APISettingsDialog(self.api_settings) # Pass the settings here
-        # Load the current settings into the dialog
+        dialog = APISettingsDialog(self.api_settings.copy(), parent=self)  # Pass a copy of the settings
         dialog.load_settings_for_provider(dialog.provider_combobox.currentText())
         if dialog.exec_() == QDialog.Accepted:
-            # Reload settings if saved
+            # Update the main window's settings only if changes are saved
+            self.api_settings = dialog.api_settings
             try:
-                self.api_settings = load_api_settings()
+                # Resave the settings to ensure they are stored in settings.json
+                settings_path = os.path.join(self.base_dir, "settings.json")
+                with open(settings_path, "w") as f:
+                    json.dump(self.api_settings, f, indent=4)
             except Exception as e:
-                logging.error(f"Error reloading API settings after dialog: {e}")
-                QMessageBox.critical(self, "Settings Error", f"Failed to reload API settings: {e}")
+                logging.error(f"Error saving API settings after dialog: {e}")
+                QMessageBox.critical(self, "Settings Error", f"Failed to save API settings: {e}")
                 
 
     def convert_project_to_text(self, project_path, llm_overview=None):
