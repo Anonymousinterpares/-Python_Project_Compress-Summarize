@@ -1,57 +1,129 @@
-# -Python_Project_Compress-Summarize v. 0.5
+# -Python_Project_Compress-Summarize v. 0.9
 
 ==================================================
 PROJECT GENERAL OVERVIEW:
 ==================================================
 
-To understand the code provided, we will break down the dependencies and their roles in the overall structure. The code implements a GUI application using PyQt5 to manage API settings and project documentation, leveraging language models from OpenAI and Google. 
+This project is a Python-based GUI application named "Project Manager," designed to facilitate the documentation and reconstruction of software projects. It allows users to select a project folder, generate documentation (in either TXT or DOCX format), and optionally use Large Language Models (LLMs) from OpenAI or Google to assist in generating project overviews. The application also supports reconstructing a project from a text-based documentation file.
 
-### Dependencies Overview
+==================================================
+Graphical Representation of Project Structure
+==================================================
 
-#### 1. **Standard Library Imports**
-- **sys**: Provides access to system-specific parameters and functions. Used for handling command-line arguments.
-- **os**: Offers functions to interact with the operating system. Used for file path manipulations and directory operations.
-- **pathlib.Path**: A more modern way to handle filesystem paths.
-- **datetime**: Helps in working with dates and times, especially for logging and file naming.
-- **json**: Provides functions to parse and write JSON data. Used for loading and saving settings.
-- **logging**: For generating log messages to track the application's behavior and errors.
+```
++-------------------------------------+
+| project_manager_gui_v1(gemini 2.0  |
+| flash thinking)_v3.py              |
++-------------------------------------+
+        |
+        |    +-----------------+
+        |--->| gui_layout.py   |
+        |    +-----------------+
+        |           ^
+        |           |
+        |           |
+        | +--------------------+
+        | | PyQt5 library     |
+        | +--------------------+
+        |
+        | +-----------------+
+        | | settings.json   |
+        | +-----------------+
+        |
+        |
+        |    +------------------+
+        |--->|  openai library  |
+        |    +------------------+
+        |
+        |    +---------------------------+
+        |--->|  google.generativeai library  |
+        |    +---------------------------+
+        |
+        V
++-------------------------------------+
+| User Interface (PyQt5 Application)  |
++-------------------------------------+
+```
+==================================================
+Explanation of the Diagram:
+==================================================
+*   `project_manager_gui_v1(gemini 2.0 flash thinking)_v3.py`: This is the main script containing the core logic of the application.
+*   `gui_layout.py`: This module contains the code for setting up the GUI layout, including applying stylesheets and initializing UI components.
+*   `settings.json`: This file stores API settings (API keys, models, temperature) for different LLM providers.
+*   `openai Library`: The external library used for interacting with OpenAI's API.
+*   `google.generativeai Library`: The external library used for interacting with Google's Gemini API.
+*   `PyQt5 Library`: The external library used for creating the GUI.
 
-#### 2. **Third-Party Libraries**
-- **PyQt5**: A set of Python bindings for Qt libraries, which are used to create the GUI.
-  - **QApplication**: Manages the GUI application's control flow and main settings.
-  - **QWidget, QMainWindow, QDialog**: Base classes for creating windows and dialogs.
-  - **QPushButton, QComboBox, QMessageBox, QSlider, QCheckBox, QRadioButton, QLabel, QLineEdit, QFileDialog**: Various widgets to build the GUI.
-- **docx**: A library for creating and manipulating `.docx` files.
-  - **Document**: Represents a Word document.
-  - **Pt**: Used for setting font sizes.
-  - **WD_ALIGN_PARAGRAPH**: Enum for paragraph alignment.
-  - **WD_STYLE_TYPE**: Enum for defining new styles.
-- **openai**: A library for accessing OpenAI's API for language models.
-- **google.generativeai**: A library for accessing Google's generative AI API, similar to OpenAI.
+==================================================
+Functions
+==================================================
 
-### Functionality Breakdown
+Here's a breakdown of the key functions within the project:
 
-#### 1. **Logging Setup**
-The `setup_logging()` function initializes the logging system, creating a log file and setting up both file and console handlers. This allows the application to log important events and errors, which is crucial for debugging and monitoring.
+*   **`gui_layout.py`**
+    *   `apply_stylesheet(widget)`: Applies a predefined stylesheet to the provided Qt widget.
+    *   `init_api_settings_ui(dialog, settings)`: Initializes the UI for the API settings dialog.
+    *   `init_project_manager_ui(main_window)`: Initializes the UI of the main project manager window.
+*   **`project_manager_gui_v1(gemini 2.0 flash thinking)_v3.py`**
+    *   `setup_logging()`: Sets up logging for the application, including file and console output.
+    *   `load_api_settings()`: Loads API settings from the `settings.json` file.
+    *   `APISettingsDialog.__init__(self, settings)`: Initializes the API settings dialog, allowing the user to configure API keys, models and temperature.
+    *   `APISettingsDialog.update_temperature_display(self, value)`: Updates the display label for the temperature slider.
+    *   `APISettingsDialog.update_api_fields(self, provider_text)`: Updates the API key label and model combo box when a provider is selected.
+    *   `APISettingsDialog.load_settings_for_provider(self, provider)`: Loads settings for specific providers.
+    *   `APISettingsDialog.save_settings(self)`: Saves the API settings to `settings.json`.
+    *   `APISettingsDialog.reset_settings(self)`: Resets the API settings for the current provider.
+        *  `AppSettingsDialog.__init__(self, settings)`: Initializes the application settings dialog, allowing the user to configure output format, temperature and tree view selection.
+        *   `AppSettingsDialog.update_temperature_display(self, value)`: Updates the display label for the temperature slider.
+        *   `AppSettingsDialog.save_settings(self)`: Saves the application settings to `settings.json`.
+    *   `ProjectManagerGUI.__init__(self)`: Initializes the main application window, sets up the UI, loads settings, and connects signals to slots.
+    *   `ProjectManagerGUI.show_llm_info_dialog(self)`: Displays a dialog with detailed information about LLMs.
+    *   `ProjectManagerGUI.select_folder(self)`: Opens a dialog to select the project folder.
+    *   `ProjectManagerGUI.select_file(self)`: Opens a dialog to select a documentation file.
+    *   `ProjectManagerGUI.reset_project_selection(self)`: Resets the selected project folder.
+    *   `ProjectManagerGUI.reset_doc_selection(self)`: Resets the selected documentation file.
+    *   `ProjectManagerGUI.update_action_state(self)`: Updates UI elements based on the selected file format.
+    *   `ProjectManagerGUI.process_project(self)`: Orchestrates the main processing logic for project documentation or reconstruction.
+    *   `ProjectManagerGUI.get_project_content_for_llm(self, project_path)`: Extracts the content of project files for LLM processing.
+    *   `ProjectManagerGUI.generate_llm_documentation(self, project_text)`: Generates documentation using the selected LLM provider.
+    *   `ProjectManagerGUI.call_openai_api(self, api_key, model, system_prompt, content, temperature)`: Makes a request to the OpenAI API.
+    *   `ProjectManagerGUI.call_google_api(self, api_key, model, system_prompt, content, temperature)`: Makes a request to the Google API.
+    *   `ProjectManagerGUI.show_api_settings(self)`: Displays the API settings dialog.
+    *   `ProjectManagerGUI.convert_project_to_text(self, project_path, output_file, llm_overview=None)`: Converts the project to a text-based documentation.
+    *   `ProjectManagerGUI.recreate_project_from_text(self, doc_file, project_name, save_location)`: Reconstructs a project structure from a text documentation file.
+    *   `ProjectManagerGUI.create_project_documentation(self, project_path, output_file, llm_content=None)`: Generates project documentation in DOCX format.
+    *   `ProjectManagerGUI.recreate_project_from_docx(self, doc_file, project_name, save_location)`: Recreates a project from a DOCX file.
+    *   `ProjectManagerGUI.convert_docx_to_txt(self, docx_path)`: Converts a DOCX file to a TXT file.
+    *   `ProjectManagerGUI.closeEvent(self, event)`: Saves settings before closing the application.
+    *   `ProjectManagerGUI.show_app_settings_dialog(self)`: Displays the application settings dialog.
+    *   `ProjectManagerGUI.set_button_icon(self, button, icon_name)`: Sets an icon for a button.
+    *   `ProjectManagerGUI.set_menu_action_icon(self, action, icon_name)`: Sets an icon for a menu action.
+    *   `ProjectManagerGUI.on_tree_selection_changed(self, selected, deselected)`: Handles changes in tree view selection.
+     *   `ProjectManagerGUI.select_all_in_folder(self, folder_index, select)`: Recursively select or deselect all items within a folder in the tree view.
+     *   
+==================================================
+**Dependencies:**
+==================================================
+*   **Python Standard Library:** `sys`, `os`, `pathlib`, `datetime`, `json`, `logging`, `unittest`.
+*   **PyQt5:** For creating the GUI (`QtWidgets`, `QtGui`, `QtCore`).
+*   **python-docx:** For creating and manipulating DOCX files (`docx`, `docx.shared`, `docx.enum.text`, `docx.enum.style`).
+*   **openai:** For interacting with the OpenAI API.
+*   **google-generativeai:** For interacting with the Google Gemini API.
+*   **chardet**: For detecting file encodings.
 
-#### 2. **APISettingsDialog Class**
-This class provides a dialog for editing API settings for OpenAI and Google. It contains fields for API key, temperature, and model selection, along with methods to load, save, and reset settings. This dialog interacts with a JSON file (`settings.json`) to persist user configurations.
+==================================================
+Detailed Explanation:
+==================================================
 
-#### 3. **ProjectManagerGUI Class**
-This is the main application class that manages the GUI and core functionalities:
-- **initUI()**: Sets up the GUI layout, including buttons for selecting project folders and documentation files, and options for action types (compress/reconstruct).
-- **select_folder() / select_file()**: Handlers for selecting project directories and files through file dialogs.
-- **update_action_state()**: Updates the state of action radio buttons based on the selected file format.
-- **process_project()**: Manages the main processing logic for compressing and reconstructing projects based on user inputs.
-- **get_project_content_for_llm()**: Extracts content from project files for use with the selected language model.
-- **generate_llm_documentation()**: Communicates with the selected LLM API (OpenAI or Google) to generate documentation based on the project content.
-
-#### 4. **LLM API Interaction**
-- **call_openai_api()**: Calls the OpenAI API to generate documentation based on the provided content and configuration.
-- **call_google_api()**: Similar to the OpenAI call but for Google's generative AI.
-
-### Data Flow in the Application
-1. **User Interaction**: The user interacts with the GUI to select project folders, documentation files, and configure API settings.
-2. **API Settings**: The application loads and saves settings to/from `settings.json` to determine which API to use for documentation generation.
-3. **Project Processing**: Depending on user selections, the application either compresses project files into documentation or reconstructs a project from existing documentation.
-4. **API Calls**: When generating documentation, the application retrieves necessary information from the project and sends it to either OpenAI or Google’s APIs, then processes the responses to display or save the results.
+*   **`gui_layout.py`**: This file is responsible for the visual presentation of the application. It contains functions to apply a consistent stylesheet across the application's widgets and to initialize the layouts of both the main window and the API settings dialog. It uses `PyQt5` for the GUI elements.
+*   **`project_manager_gui_v1(gemini 2.0 flash thinking)_v3.py`**: This is the core file where the main logic resides. It includes setting up logging, loading API settings from `settings.json`, defining the GUI application window (`ProjectManagerGUI`), handling user interactions, and implementing the project documentation and reconstruction functionality.
+    *   The `ProjectManagerGUI` class is the main window of the application. It initializes the UI, including buttons, radio buttons, a file tree view, and connections to the corresponding functions.
+    *   The application uses the `QFileSystemModel` to display the project directory structure in a tree view. The `QTreeView` allows the user to select files and folders.
+    *   The app supports using LLMs for documentation. The user can select between OpenAI and Google's Gemini models and provide API keys. The `openai` and `google.generativeai` libraries are used for interacting with the respective APIs.
+    *   The application provides the functionality to generate documentation in both TXT and DOCX formats. The `docx` library is used to create DOCX files.
+    *   The application also provides the functionality to reconstruct a project from a documentation file. It parses the file, recreates the directory structure, and writes file content.
+    *   The `settings.json` file stores the API keys and other settings.
+    *   The logging module is used for logging all actions, errors, and warnings.
+    *   The application also includes a basic application settings dialog for output format, temperature and tree view selection mode.
+*   **`settings.json`**: This file contains a JSON object with API keys for OpenAI and Google, along with other settings (temperature, model).
+*   **`logs\dev_manager.log`**: Contains logs from the application.
