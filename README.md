@@ -1,7 +1,8 @@
 # -Python_Project_Compress-Summarize v. 0.9
 
-==================================================
+==========================
 PROJECT GENERAL OVERVIEW:
+==========================
 
 This project is a Python-based GUI application named "Project Manager," designed to facilitate the documentation and reconstruction of software projects. It allows users to select a project folder, generate documentation (in either TXT or DOCX format), and optionally use Large Language Models (LLMs) from OpenAI or Google to assist in generating project overviews. The application also supports reconstructing a project from a text-based documentation file.
 
