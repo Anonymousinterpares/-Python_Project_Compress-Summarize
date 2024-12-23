@@ -1,0 +1,1502 @@
+import sys
+import os
+from pathlib import Path
+from datetime import datetime
+import json
+import logging
+import unittest
+from PyQt5.QtWidgets import (
+    QApplication,
+    QWidget,
+    QPushButton,
+    QFileDialog,
+    QMessageBox,
+    QMainWindow,
+    QAction,
+    QInputDialog,
+    QCheckBox,
+    QGroupBox,
+    QVBoxLayout,
+    QHBoxLayout,
+    QRadioButton,
+    QLabel,
+    QGridLayout,
+    QLineEdit,
+    QDialog,
+    QSlider,
+    QComboBox,
+    QToolTip,
+    QTextBrowser,
+    QSizePolicy,
+    QFrame,
+    QSpacerItem,
+    QButtonGroup,
+    QTreeView,
+    QFileSystemModel
+)
+from PyQt5.QtGui import QIcon
+from PyQt5.QtCore import Qt, QDir, QItemSelectionModel
+from docx import Document
+from docx.shared import Pt
+from docx.enum.text import WD_ALIGN_PARAGRAPH
+from docx.enum.style import WD_STYLE_TYPE
+import openai  # Import the openai library
+if openai.__version__ < "1.0.0":
+    QMessageBox.warning(self, "OpenAI Library Outdated", "Please update the OpenAI library to version 1.0.0 or newer.")
+import google.generativeai as genai # Import the google generativeai library
+from gui_layout import init_project_manager_ui, init_api_settings_ui, apply_stylesheet # Import the layout functions
+
+def setup_logging():
+    """Sets up logging configuration for the application.
+    Creates a logs directory if it doesn't exist and configures both file and console logging."""
+    script_dir = os.path.dirname(os.path.abspath(__file__))  # Get the directory of the script
+    log_dir = os.path.join(script_dir, "logs")  # Create a logs subdirectory
+    if not os.path.exists(log_dir):
+        os.makedirs(log_dir)
+
+    log_file = os.path.join(log_dir, "dev_manager.log")
+
+    logger = logging.getLogger()
+    logger.setLevel(logging.DEBUG)
+
+    file_handler = logging.FileHandler(log_file)
+    file_handler.setLevel(logging.DEBUG)
+
+    formatter = logging.Formatter("%(asctime)s - %(levelname)s - %(message)s")
+    file_handler.setFormatter(formatter)
+
+    logger.addHandler(file_handler)
+
+    # Add a StreamHandler to output logs to the console as well
+    stream_handler = logging.StreamHandler()
+    stream_handler.setLevel(logging.INFO)  # Set the level for console output
+    stream_handler.setFormatter(formatter)
+    logger.addHandler(stream_handler)
+
+    logging.info(f"Logging setup complete. Log file: {log_file}")
+    print(f"Logging setup complete. Log file: {log_file}")
+
+setup_logging()
+
+def load_api_settings():
+    """Load API settings and other persistent data from settings.json."""
+    try:
+        script_dir = os.path.dirname(os.path.abspath(__file__))
+        settings_path = os.path.join(script_dir, "settings.json")
+        with open(settings_path, "r") as f:
+            settings = json.load(f)
+            # Ensure default structure for recent paths
+            if "recent_paths" not in settings:
+                settings["recent_paths"] = {"project": "", "doc": ""}
+            return settings
+    except FileNotFoundError:
+        logging.warning("settings.json not found. Starting with default settings.")
+        return {"recent_paths": {"project": "", "doc": ""}}
+    except json.JSONDecodeError:
+        logging.error("Error decoding settings.json. Please check the file format.")
+        QMessageBox.warning(None, "Settings Error", "Error reading settings file. Starting with default settings.")
+        return {"recent_paths": {"project": "", "doc": ""}}
+    except Exception as e:
+        logging.error(f"Unexpected error loading settings: {e}")
+        QMessageBox.critical(None, "Settings Error", f"Failed to load settings: {e}")
+        return {"recent_paths": {"project": "", "doc": ""}}
+
+class APISettingsDialog(QDialog):
+    """Dialog for editing API settings."""
+class AppSettingsDialog(QDialog):
+    """Dialog for editing application settings."""
+    def __init__(self, settings):
+        """
+        Initializes the application settings dialog.
+
+        Args:
+            settings (dict): The current application settings.
+        """
+        super().__init__()
+        self.app_settings = settings
+        apply_stylesheet(self)
+        self.setWindowTitle('Application Settings')
+        self.setGeometry(200, 200, 400, 200)
+
+        main_layout = QVBoxLayout()
+
+        # Output Format
+        format_group = QGroupBox("Output Format")
+        format_layout = QVBoxLayout()
+        self.docx_radio = QRadioButton("DOCX")
+        self.txt_radio = QRadioButton("TXT")
+        if self.app_settings.get("output_format") == "docx":
+            self.docx_radio.setChecked(True)
+        else:
+            self.txt_radio.setChecked(True)
+        format_layout.addWidget(self.docx_radio)
+        format_layout.addWidget(self.txt_radio)
+        format_group.setLayout(format_layout)
+        main_layout.addWidget(format_group)
+
+        # LLM Temperature
+        temp_group = QGroupBox("LLM Temperature")
+        temp_layout = QVBoxLayout()
+        temperature_label = QLabel("Temperature (0.0 - 1.0):")
+        self.temperature_slider = QSlider(Qt.Horizontal)
+        self.temperature_slider.setMinimum(0)
+        self.temperature_slider.setMaximum(100)
+        self.temperature_slider.setValue(int(self.app_settings.get("llm_temperature", 0.7) * 100))
+        self.temperature_slider.valueChanged.connect(self.update_temperature_display)
+        self.temperature_display_label = QLabel(f"{self.temperature_slider.value() / 100:.2f}")
+        temp_layout.addWidget(temperature_label)
+        temp_hbox = QHBoxLayout()
+        temp_hbox.addWidget(self.temperature_slider)
+        temp_hbox.addWidget(self.temperature_display_label)
+        temp_layout.addLayout(temp_hbox)
+        temp_group.setLayout(temp_layout)
+        main_layout.addWidget(temp_group)
+
+        # Tree View Selection
+        treeview_group = QGroupBox("Tree View Selection")
+        treeview_layout = QVBoxLayout()
+        self.recursive_selection_check = QCheckBox("Recursive Selection")
+        self.recursive_selection_check.setChecked(self.app_settings.get("recursive_selection", True))
+        treeview_layout.addWidget(self.recursive_selection_check)
+        treeview_group.setLayout(treeview_layout)
+        main_layout.addWidget(treeview_group)
+
+        # Buttons
+        button_layout = QHBoxLayout()
+        save_button = QPushButton("Save")
+        save_button.setIcon(QIcon("icons/save.png"))
+        save_button.clicked.connect(self.save_settings)
+        cancel_button = QPushButton("Cancel")
+        cancel_button.setIcon(QIcon("icons/cancel.png"))
+        cancel_button.clicked.connect(self.reject)
+        button_layout.addWidget(save_button)
+        button_layout.addWidget(cancel_button)
+        main_layout.addLayout(button_layout)
+
+        self.setLayout(main_layout)
+
+    def update_temperature_display(self, value):
+        """Updates the temperature display label."""
+        self.temperature_display_label.setText(f"{value / 100:.2f}")
+
+    def update_api_fields(self, provider_text):
+        print(f"Updating API fields for provider: {provider_text}")  # Debug print
+        self.api_key_label.setText(f"{provider_text} API Key:")
+        self.api_key_edit.clear()
+        self.model_combobox.clear()
+        if provider_text == "OpenAI":
+            self.model_combobox.addItems(["gpt-4o", "gpt-4o-mini", "gpt-4", "gpt-3.5-turbo", "gpt-4-turbo"])
+        elif provider_text == "Google":
+            self.model_combobox.addItems(["gemini-1.5-pro","gemini-exp-1206","gemini-1.5-flash", "gemini-2.0-flash-exp","learnlm-1.5-pro-experimental","",""]) # Add the new Google model
+        print(f"Model combobox items: {[self.model_combobox.itemText(i) for i in range(self.model_combobox.count())]}") # Debug print
+
+    def load_settings_for_provider(self, provider):
+        provider_settings = self.api_settings.get(provider.lower(), {})
+        api_key = provider_settings.get("api_key", "")
+        if api_key:
+            # Mask the API key for display
+            self.api_key_edit.setText("*" * len(api_key)) # Changed to mask the entire key for security
+        self.temperature_slider.setValue(int(provider_settings.get("temperature", 0.7) * 100))
+        self.model_combobox.setCurrentText(provider_settings.get("model", ""))
+
+    def save_settings(self):
+        """Saves the application settings to settings.json."""
+        self.app_settings["output_format"] = "docx" if self.docx_radio.isChecked() else "txt"
+        self.app_settings["llm_temperature"] = self.temperature_slider.value() / 100
+        self.app_settings["recursive_selection"] = self.recursive_selection_check.isChecked()
+
+        try:
+            script_dir = os.path.dirname(os.path.abspath(__file__))
+            settings_path = os.path.join(script_dir, "settings.json")
+            with open(settings_path, "w") as f:
+                json.dump(self.app_settings, f, indent=4)
+            QMessageBox.information(self, "Settings Saved", "Application settings saved successfully.")
+            self.accept()
+        except Exception as e:
+            logging.error(f"Error saving application settings: {e}")
+            QMessageBox.critical(self, "Error", f"Error saving application settings: {e}")
+
+    def reset_settings(self):
+        """Reset the API settings for the current provider."""
+        provider = self.provider_combobox.currentText()
+        reply = QMessageBox.warning(
+            self, "Warning",
+            f"Are you sure you want to reset the API settings for {provider}?\nThis action is irreversible.",
+            QMessageBox.Yes | QMessageBox.Cancel
+        )
+        if reply == QMessageBox.Yes:
+            if provider.lower() in self.api_settings:
+                del self.api_settings[provider.lower()]
+                try:
+                    script_dir = os.path.dirname(os.path.abspath(__file__))
+                    settings_path = os.path.join(script_dir, "settings.json")
+                    with open(settings_path, "w") as f:
+                        json.dump(self.api_settings, f, indent=4)
+                    QMessageBox.information(self, "Settings Reset", f"{provider} API settings have been reset.")
+                    self.load_settings_for_provider(provider) # Clear the fields
+                    # Clear the displayed API key
+                    self.api_key_edit.clear()
+                    self.temperature_slider.setValue(70) # Reset temperature slider
+                    self.model_combobox.setCurrentIndex(-1) # Reset model combobox
+                except Exception as e:
+                    QMessageBox.critical(self, "Error", f"Error resetting settings: {e}")
+            else:
+                QMessageBox.information(self, "No Settings", f"No settings found for {provider}.")
+
+    def reset_settings(self):
+        """Reset the API settings for the current provider."""
+        provider = self.provider_combobox.currentText()
+        reply = QMessageBox.warning(
+            self, "Warning",
+            f"Are you sure you want to reset the API settings for {provider}?\nThis action is irreversible.",
+            QMessageBox.Yes | QMessageBox.Cancel
+        )
+        if reply == QMessageBox.Yes:
+            if provider.lower() in self.api_settings:
+                del self.api_settings[provider.lower()]
+                try:
+                    script_dir = os.path.dirname(os.path.abspath(__file__))
+                    settings_path = os.path.join(script_dir, "settings.json")
+                    with open(settings_path, "w") as f:
+                        json.dump(self.api_settings, f, indent=4)
+                    QMessageBox.information(self, "Settings Reset", f"{provider} API settings have been reset.")
+                    self.load_settings_for_provider(provider) # Clear the fields
+                    # Clear the displayed API key
+                    self.api_key_edit.clear()
+                    self.temperature_slider.setValue(70) # Reset temperature slider
+                    self.model_combobox.setCurrentIndex(-1) # Reset model combobox
+                except Exception as e:
+                    QMessageBox.critical(self, "Error", f"Error resetting settings: {e}")
+            else:
+                QMessageBox.information(self, "No Settings", f"No settings found for {provider}.")
+
+class ProjectManagerGUI(QMainWindow):
+    """Main application window for the Project Manager."""
+
+    def __init__(self):
+        """Initialize the main application window and load API settings."""
+        try:
+            super().__init__()
+
+            if QApplication.instance() is None:
+                logging.error("QApplication was not initialized properly.")
+                sys.exit(1)
+
+            self.api_settings = load_api_settings()
+            self.load_app_settings()
+            # Load recent paths from settings
+            self.recent_project_path = self.api_settings.get("recent_paths", {}).get("project", "")
+            self.recent_doc_path = self.api_settings.get("recent_paths", {}).get("doc", "")
+            self.project_path = None
+            self.doc_file_path = None
+            self.google_model = None
+
+            self.file_system_model = QFileSystemModel()
+            self.file_system_model.setRootPath(QDir.homePath())
+            self.file_system_model.setFilter(QDir.AllEntries | QDir.NoDotAndDotDot) # Include all entries
+
+            init_project_manager_ui(self)
+
+            self.project_tree_view.setModel(self.file_system_model)
+            self.project_tree_view.setRootIndex(self.file_system_model.index(QDir.homePath()))
+            self.project_tree_view.setColumnHidden(1, True)
+            self.project_tree_view.setColumnHidden(2, True)
+            self.project_tree_view.setColumnHidden(3, True)
+
+            self.selected_files_for_compression = []
+
+            self.icons_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "icons")
+
+            self._init_menu()
+            self._init_buttons()
+            self._init_connections()
+
+            # Connect the tree view's selection model's selectionChanged signal
+            self.project_tree_view.selectionModel().selectionChanged.connect(self.on_tree_selection_changed)
+
+            self.setWindowFlags(Qt.Window | Qt.WindowMinimizeButtonHint | Qt.WindowMaximizeButtonHint | Qt.WindowCloseButtonHint)
+            logging.info(f"Window flags after setting: {self.windowFlags()}")
+
+            self.showMaximized()
+
+        except Exception as e:
+            logging.error(f"Exception during GUI initialization: {e}")
+            QMessageBox.critical(self, "Initialization Error", f"An error occurred during GUI initialization: {e}")
+            sys.exit(1)
+
+    def load_app_settings(self):
+        """Loads application settings from settings.json, or sets default values."""
+        default_settings = {
+            "output_format": "txt",  # Default output format
+            "llm_temperature": 0.7,  # Default temperature for LLMs
+            "recursive_selection": True # Default tree view selection mode
+        }
+
+        try:
+            script_dir = os.path.dirname(os.path.abspath(__file__))
+            settings_path = os.path.join(script_dir, "settings.json")
+            with open(settings_path, "r") as f:
+                self.app_settings = json.load(f)
+
+            # Ensure default values are present
+            for key, value in default_settings.items():
+                if key not in self.app_settings:
+                    self.app_settings[key] = value
+
+        except FileNotFoundError:
+            logging.warning("settings.json not found. Using default settings.")
+            self.app_settings = default_settings
+        except json.JSONDecodeError:
+            logging.error("Error decoding settings.json. Using default settings.")
+            self.app_settings = default_settings
+        except Exception as e:
+            logging.error(f"Unexpected error loading settings: {e}")
+            self.app_settings = default_settings
+        
+        logging.info(f"Application settings loaded: {self.app_settings}")
+
+    
+    def _init_menu(self):
+        """Initializes the menu bar."""
+        menubar = self.menuBar()
+        file_menu = menubar.addMenu('&File')
+        settings_menu = menubar.addMenu('&Settings')
+
+        self.exit_action = QAction('Exit')
+        self.exit_action.setShortcut('Ctrl+Q')
+        file_menu.addAction(self.exit_action)
+
+        self.api_settings_action = QAction('API Settings')
+        settings_menu.addAction(self.api_settings_action)
+
+        self.set_menu_action_icon(self.api_settings_action, "settings.png")
+        self.set_menu_action_icon(self.exit_action, "exit.png")
+
+        self.exit_action.triggered.connect(QApplication.instance().quit)
+        self.api_settings_action.triggered.connect(self.show_api_settings)
+
+    def _init_buttons(self):
+        """Initializes the buttons and sets their icons."""
+        self.set_button_icon(self.select_project_button, "folder.png")
+        self.set_button_icon(self.reset_project_button, "reset.png")
+        self.set_button_icon(self.select_doc_button, "file.png")
+        self.set_button_icon(self.reset_doc_button, "reset.png")
+        self.set_button_icon(self.llm_info_button, "info.png")
+        self.set_button_icon(self.process_button, "process.png")
+
+    def _init_connections(self):
+        """Initializes the connections between signals and slots."""
+        self.select_project_button.clicked.connect(self.select_folder)
+        self.reset_project_button.clicked.connect(self.reset_project_selection)
+        self.select_doc_button.clicked.connect(self.select_file)
+        self.reset_doc_button.clicked.connect(self.reset_doc_selection)
+        self.docx_radio.toggled.connect(self.update_action_state)
+        self.txt_radio.toggled.connect(self.update_action_state)
+        self.llm_info_button.clicked.connect(self.show_llm_info_dialog)
+        self.process_button.clicked.connect(self.process_project)
+        self.update_action_state()
+
+    def show_app_settings_dialog(self):
+        """Displays a dialog for editing application settings."""
+        dialog = AppSettingsDialog(self.app_settings)
+        if dialog.exec_() == QDialog.Accepted:
+            # Reload settings if saved
+            try:
+                self.load_app_settings()
+                # Update relevant parts of the UI based on new settings
+                if self.app_settings["output_format"] == "docx":
+                    self.docx_radio.setChecked(True)
+                else:
+                    self.txt_radio.setChecked(True)
+                self.recursive_selection_check.setChecked(self.app_settings["recursive_selection"])
+            except Exception as e:
+                logging.error(f"Error reloading app settings after dialog: {e}")
+                QMessageBox.critical(self, "Settings Error", f"Failed to reload app settings: {e}")
+            
+    def set_button_icon(self, button, icon_name):
+        """Helper function to set icon for a button."""
+        icon_path = os.path.join(self.icons_dir, icon_name)
+        if os.path.exists(icon_path):
+            icon = QIcon(icon_path)
+            button.setIcon(icon)
+            logging.debug(f"Icon set for {button.text()}: {icon_path}")
+        else:
+            logging.warning(f"Icon file not found: {icon_path}")
+
+    def set_menu_action_icon(self, action, icon_name):
+        """Helper function to set icon for a menu action."""
+        icon_path = os.path.join(self.icons_dir, icon_name)
+        if os.path.exists(icon_path):
+            icon = QIcon(icon_path)
+            action.setIcon(icon)
+            logging.debug(f"Icon set for action: {icon_path}")
+        else:
+            logging.warning(f"Icon file not found: {icon_path}")
+
+
+    def show_llm_info_dialog(self):
+        """Displays a dialog with detailed information about LLMs."""
+        dialog = QDialog(self)
+        dialog.setWindowTitle("LLM Information")
+        dialog.setGeometry(200, 200, 500, 400)
+        layout = QVBoxLayout(dialog)
+
+        text_browser = QTextBrowser()
+        text_browser.setOpenExternalLinks(True) # Allow opening links in the browser
+
+        info_text = """
+        <h2>Understanding Language Models (LLMs)</h2>
+        <p>Large Language Models can be used to generate documentation for your project, providing a high-level overview of its functionality and structure.</p>
+
+        <h3>OpenAI Models</h3>
+        <p>OpenAI offers powerful models like GPT-4o, GPT-4, and GPT-3.5-turbo. These models are excellent for understanding code and generating human-readable text.</p>
+        <ul>
+            <li><b>gpt-4o:</b> OpenAI's newest flagship model.</li>
+            <li><b>gpt-4:</b> A very capable model with a good balance of performance and cost. Ideal for complex projects.</li>
+            <li><b>gpt-3.5-turbo:</b> A faster and more cost-effective model, suitable for smaller to medium-sized projects.</li>
+        </ul>
+        <p><b>Note:</b> OpenAI models have context window limits. For very large projects, you might need to consider the amount of code being processed at once.</p>
+
+        <h3>Google Models</h3>
+        <p>Google's Gemini models, such as gemini-pro and models/gemini-2.0-flash-exp, are designed for various generative tasks, including code understanding and documentation.</p>
+        <ul>
+            <li><b>gemini-pro:</b> A balanced model suitable for a wide range of tasks.</li>
+            <li><b>models/gemini-2.0-flash-exp:</b> Designed for speed and efficiency.</li>
+        </ul>
+        <p><b>Key Advantage:</b> Google models generally offer larger context windows, making them well-suited for processing extensive codebases without losing context.</p>
+
+        <h3>Choosing the Right Model</h3>
+        <ul>
+            <li>For <b>smaller projects</b> or when cost is a primary concern, <b>GPT-3.5-turbo</b> might be a good choice.</li>
+            <li>For <b>complex projects</b> requiring high accuracy and detailed understanding, <b>GPT-4o</b> or <b>GPT-4</b> are recommended.</li>
+            <li>For <b>large projects</b> with extensive code, <b>Google's Gemini models</b> are advantageous due to their larger context windows.</li>
+        </ul>
+
+        <p>You can configure the API keys and model settings in the "Settings" menu under "API Settings". Make sure to enter your API key for the selected provider.</p>
+        """
+        text_browser.setHtml(info_text)
+        layout.addWidget(text_browser)
+
+        close_button = QPushButton("Close", dialog)
+        close_button.clicked.connect(dialog.accept)
+        layout.addWidget(close_button)
+
+        dialog.setLayout(layout)
+        dialog.exec_()
+
+    def select_folder(self):
+        """Handle project folder selection, remembering the last location and selecting contents."""
+        folder_path = QFileDialog.getExistingDirectory(
+            self, "Select Project Folder", self.recent_project_path
+        )
+        if folder_path:
+            self.project_path = folder_path
+            self.recent_project_path = folder_path  # Update recent path
+            logging.info(f"Selected folder: {self.project_path}")
+            self.file_system_model.setRootPath(folder_path)
+            root_index = self.file_system_model.index(folder_path)
+            self.project_tree_view.setRootIndex(root_index)
+            self.project_tree_view.expandToDepth(0)
+
+            # Recursively select all items in the selected folder, only if enabled
+            if self.recursive_selection_check.isChecked():
+                self.select_all_in_folder(root_index, True)
+
+    def select_all_in_folder(self, folder_index, select):
+        """Recursively select or deselect all items within a folder in the tree view."""
+        if not folder_index.isValid():
+            return
+
+        # Select/deselect the folder itself, only if different from current state
+        current_selection_model = self.project_tree_view.selectionModel()
+        if select and not current_selection_model.isSelected(folder_index):
+            current_selection_model.select(folder_index, QItemSelectionModel.Select)
+        elif not select and current_selection_model.isSelected(folder_index):
+            current_selection_model.select(folder_index, QItemSelectionModel.Deselect)
+        
+        # Iterate over all children
+        for row in range(self.file_system_model.rowCount(folder_index)):
+            child_index = self.file_system_model.index(row, 0, folder_index)
+            if child_index.isValid():
+                if self.file_system_model.isDir(child_index):
+                    # Recursively process subfolders
+                    self.select_all_in_folder(child_index, select)
+                else:
+                    # Select/deselect files, only if different from current state
+                    if select and not current_selection_model.isSelected(child_index):
+                        current_selection_model.select(child_index, QItemSelectionModel.Select)
+                    elif not select and current_selection_model.isSelected(child_index):
+                        current_selection_model.select(child_index, QItemSelectionModel.Deselect)
+
+    def on_tree_selection_changed(self, selected, deselected):
+        """Handle changes in tree view selection, including recursive selection/deselection."""
+
+        if not self.recursive_selection_check.isChecked():
+            return
+
+        for index in selected.indexes():
+            if self.file_system_model.isDir(index):
+                self.select_all_in_folder(index, True)
+
+        for index in deselected.indexes():
+            if self.file_system_model.isDir(index):
+                self.select_all_in_folder(index, False)
+
+    def closeEvent(self, event):
+        """Save settings before closing the application."""
+        try:
+            # Save recent paths
+            self.api_settings["recent_paths"] = {
+                "project": self.recent_project_path,
+                "doc": self.recent_doc_path
+            }
+
+            # Save settings.json in the same directory as the script
+            script_dir = os.path.dirname(os.path.abspath(__file__))
+            settings_path = os.path.join(script_dir, "settings.json")
+            with open(settings_path, "w") as f:
+                json.dump(self.api_settings, f, indent=4)
+            logging.info("Settings saved successfully on close.")
+        except Exception as e:
+            logging.error(f"Error saving settings on close: {e}")
+            QMessageBox.critical(self, "Error", f"Error saving settings: {e}")
+        finally:
+            event.accept()
+
+    def select_file(self):
+        """Handle documentation file selection, remembering the last location."""
+        file_path, _ = QFileDialog.getOpenFileName(
+            self,
+            "Select Documentation File",
+            self.recent_doc_path,
+            "Documentation files (*.txt *.docx);;All files (*.*)",
+        )
+        if file_path:
+            self.doc_file_path = file_path
+            self.recent_doc_path = os.path.dirname(file_path)  # Store the directory
+            print(f"Selected file: {self.doc_file_path}")
+
+    def reset_project_selection(self):
+        """Resets the project folder selection."""
+        self.project_path = None
+        self.recent_project_path = ""
+        print("Project folder selection reset.")
+        QMessageBox.information(self, "Reset", "Project folder selection has been reset.")
+
+    def reset_doc_selection(self):
+        """Resets the documentation file selection."""
+        self.doc_file_path = None
+        self.recent_doc_path = ""
+        print("Documentation file selection reset.")
+        QMessageBox.information(self, "Reset", "Documentation file selection has been reset.")
+
+    def update_action_state(self):
+        """Updates the state of the action radio buttons based on the selected file format."""
+        if self.docx_radio.isChecked():
+            self.compress_radio.setChecked(True)
+            self.compress_radio.setEnabled(False)
+            self.reconstruct_radio.setEnabled(True)
+        elif self.txt_radio.isChecked():
+            self.compress_radio.setEnabled(True)
+            self.reconstruct_radio.setEnabled(True)
+
+    def _read_file_content(self, file_path):
+        """
+        Reads the content of a file with appropriate encoding detection.
+
+        Args:
+            file_path (str): The path to the file.
+
+        Returns:
+            str: The content of the file, or an error message if the file cannot be read.
+        """
+        try:
+            with open(file_path, "r", encoding="utf-8") as f:
+                return f.read()
+        except UnicodeDecodeError:
+            logging.warning(f"Trying alternative encodings for: {file_path}")
+            try:
+                import chardet
+                with open(file_path, "rb") as f:
+                    rawdata = f.read()
+                    result = chardet.detect(rawdata)
+                    encoding = result['encoding']
+
+                with open(file_path, "r", encoding=encoding) as f:
+                    content = f.read()
+                    logging.info(f"Successfully read {file_path} using detected encoding: {encoding}")
+                    return content
+            except ImportError:
+                logging.warning("chardet library not found. Please install it using 'pip install chardet'")
+                return f"Could not read content due to encoding issues. Install 'chardet' for better encoding detection."
+            except Exception as e_alt:
+                logging.error(f"Error reading file with detected encoding: {file_path} - {e_alt}")
+                return "Could not read content due to encoding issues."
+
+    def process_project(self):
+        """Handle the main project processing logic."""
+        logging.info("Starting project processing")
+
+        if self.compress_radio.isChecked():
+            logging.info("Compress project option selected")
+            # Handle compression (documentation generation)
+            if not self.project_path:
+                QMessageBox.warning(self, "Error", "Please select a project folder first.")
+                logging.warning("No project folder selected for compression")
+                return
+
+            # Get selected files for individual compression
+            selected_indexes = self.project_tree_view.selectionModel().selectedRows()
+            self.selected_files_for_compression = [self.file_system_model.filePath(index) for index in selected_indexes if self.file_system_model.fileInfo(index).isFile()]
+            logging.info(f"Selected files for individual compression: {self.selected_files_for_compression}")
+
+            llm_output = None
+            if self.use_llm_check.isChecked():
+                logging.info("Fetching LLM documentation...")
+                project_text_content_for_llm = self.get_project_content_for_llm(self.project_path)
+                if project_text_content_for_llm:
+                    llm_output = self.generate_llm_documentation(project_text_content_for_llm)
+                    if llm_output:
+                        logging.info("LLM documentation fetched successfully.")
+                    else:
+                        logging.warning("LLM documentation generation failed.")
+                else:
+                    logging.warning("Could not extract project content for LLM.")
+            else:
+                # Explicitly check the "None" radio button if LLM is not used
+                self.none_radio.setChecked(True)
+
+            if self.txt_radio.isChecked():
+                logging.info("TXT format selected")
+                self.convert_project_to_text(self.project_path, llm_overview=llm_output)
+
+            elif self.docx_radio.isChecked():
+                logging.info("DOCX format selected")
+                self.create_project_documentation(self.project_path, llm_content=llm_output)
+
+        elif self.reconstruct_radio.isChecked():
+            logging.info("Reconstruct project option selected")
+            # Handle reconstruction
+            if not self.doc_file_path:
+                QMessageBox.warning(
+                    self, "Error", "Please select a documentation file first."
+                )
+                logging.warning("No documentation file selected for reconstruction")
+                return
+
+            if self.doc_file_path.endswith(".txt"):
+                logging.info("TXT format selected for reconstruction")
+                project_name = QInputDialog.getText(
+                    self, "Project Name", "Enter the name for the reconstructed project:"
+                )[0]
+                if project_name:
+                    save_location = QFileDialog.getExistingDirectory(
+                        self, "Select Save Location"
+                    )
+                    if save_location:
+                        self.recreate_project_from_text(
+                            self.doc_file_path, project_name, save_location
+                        )
+            elif self.doc_file_path.endswith(".docx"):
+                logging.info("DOCX format selected for reconstruction")
+                project_name = QInputDialog.getText(
+                    self, "Project Name", "Enter the name for the reconstructed project:"
+                )[0]
+                if project_name:
+                    save_location = QFileDialog.getExistingDirectory(
+                        self, "Select Save Location"
+                    )
+                    if save_location:
+                        self.recreate_project_from_docx(
+                            self.doc_file_path, project_name, save_location
+                        )
+            else:
+                QMessageBox.warning(
+                    self,
+                    "Error",
+                    "Invalid documentation file type for reconstruction. Select a .txt file.",
+                )
+                logging.warning(
+                    f"Invalid documentation file type selected for reconstruction: {self.doc_file_path}"
+                )
+
+    def get_project_content_for_llm(self, project_path):
+        """
+        Extracts content from project files for LLM processing, with improved encoding handling.
+
+        Args:
+            project_path (str): Path to the project directory
+
+        Returns:
+            str: Concatenated content of all relevant project files
+        """
+        project_content_for_llm = ""
+        for root, _, files in os.walk(project_path):
+            for file in files:
+                if file.endswith((".py", ".json", ".log")) and not file.startswith("."):
+                    file_path = os.path.join(root, file)
+                    rel_path = os.path.relpath(file_path, project_path)
+                    try:
+                        with open(file_path, "r", encoding="utf-8") as sourcefile:
+                            content = sourcefile.read()
+                            project_content_for_llm += f"File: {rel_path}\n{content}\n\n"
+                    except UnicodeDecodeError:
+                        logging.warning(f"Trying alternative encodings for: {file_path}")
+                        try:
+                            # Use chardet to detect encoding
+                            import chardet
+                            with open(file_path, "rb") as f:
+                                rawdata = f.read()
+                                result = chardet.detect(rawdata)
+                                encoding = result['encoding']
+                            
+                            with open(file_path, "r", encoding=encoding) as sourcefile:
+                                content = sourcefile.read()
+                                project_content_for_llm += f"File (read as {encoding}): {rel_path}\n{content}\n\n"
+                                logging.info(f"Successfully read {file_path} using detected encoding: {encoding}")
+
+                        except ImportError:
+                            logging.warning("chardet library not found. Please install it using 'pip install chardet'")
+                            project_content_for_llm += f"File (encoding error): {rel_path}\nCould not read content due to encoding issues. Install 'chardet' for better encoding detection.\n\n"
+
+                        except Exception as e_alt:
+                            logging.error(f"Error reading file with detected encoding: {file_path} - {e_alt}")
+                            project_content_for_llm += f"File (encoding error): {rel_path}\nCould not read content due to encoding issues.\n\n"
+
+                    except Exception as e:
+                        logging.error(f"Unexpected error reading file for LLM: {file_path} - {e}")
+        return project_content_for_llm
+    
+    def generate_llm_documentation(self, project_text):
+        """Generates documentation using the selected LLM provider.
+        Args:
+            project_text (str): Project content to analyze
+        Returns:
+            str: Generated documentation text, or None if generation fails"""
+        selected_llm = None
+        if self.openai_radio.isChecked():
+            selected_llm = "openai"
+        elif self.google_radio.isChecked():
+            selected_llm = "google"
+
+        if not selected_llm:
+            QMessageBox.warning(self, "Warning", "Please select an LLM provider.")
+            return None
+
+        llm_settings = self.api_settings.get(selected_llm, {})
+        api_key = llm_settings.get("api_key")
+        model = llm_settings.get("model")
+        temperature = llm_settings.get("temperature", 0.7)
+
+        if not api_key:
+            QMessageBox.warning(self, "Error", f"{selected_llm.capitalize()} API key not configured.")
+            return None
+
+        overview_type = "general" if self.general_radio.isChecked() else "detailed"
+
+        system_prompt = f"""You are a Coding Master tasked with explaining the provided code. Provide a {overview_type} overview. **Obligatory elements to be included: 1) Project Overview 2) Graphical Representation of project structure. 3) Functions 4) Dependencies**.
+Do not comment on code issues, errors or potential for expansion. Provide a graphical overview of the project structure and main data flow using text characters. Use the following format as an example:
++-----------------+     +-----------------+     +-----------------+
+| main.py   |---->| code1223445677899.py |---->| settings.json |
++-----------------+     +-----------------+     +-----------------+
+      ^                                               |
+      |                                               |
+      +-----------------------------------------------+
+                                         |
+                                         V
+                            +-----------------+
+                            | PyQt5 library  |
+                            +-----------------+"""
+
+        if selected_llm == "openai":
+            return self.call_openai_api(api_key, model, system_prompt, project_text, temperature)
+        elif selected_llm == "google":
+            return self.call_google_api(api_key, model, system_prompt, project_text, temperature) # Added model parameter for consistency
+
+    def call_openai_api(self, api_key, model, system_prompt, content, temperature):
+        """Makes a request to the OpenAI API for documentation generation.
+        Args:
+            api_key (str): OpenAI API key
+            model (str): Model identifier
+            system_prompt (str): System context for the request
+            content (str): Project content to analyze
+            temperature (float): Temperature setting for generation
+        Returns:
+            str: Generated content or None if request fails"""
+        logging.info(f"Calling OpenAI API with model: {model}, temperature: {temperature}")
+        openai.api_key = api_key
+        try:
+            logging.debug(f"OpenAI API Request - Model: {model}, Temperature: {temperature}, Prompt: {system_prompt}, Content: {content[:500]}...")
+            # Use openai.chat.completions.create for chat models
+            response = openai.chat.completions.create(
+                model=model,
+                messages=[
+                    {"role": "system", "content": system_prompt},
+                    {"role": "user", "content": content}
+                ],
+                temperature=temperature,
+            )
+            logging.debug(f"OpenAI API Response: {response}")
+            # Access the generated text from the response
+            return response.choices[0].message.content.strip()
+        except openai.OpenAIError as e:
+            logging.error(f"OpenAI API error: {e}")
+            QMessageBox.critical(self, "OpenAI Error", f"Error communicating with OpenAI: {e}")
+            return None
+        except Exception as e:
+            logging.error(f"Error calling OpenAI API: {e}")
+            QMessageBox.critical(self, "OpenAI Error", f"An unexpected error occurred with OpenAI: {e}")
+            return None
+
+    def call_google_api(self, api_key, model, system_prompt, content, temperature):
+        """Calls the Google API to generate documentation."""
+        logging.info(f"Calling Google API with model: {model}, temperature: {temperature}")
+        genai.configure(api_key=api_key)
+        generation_config = genai.types.GenerationConfig(
+            temperature=temperature,
+            max_output_tokens=8192 # Setting the output token limit as per the model's capability
+        )
+        # Handle model code vs. model name
+        if model.startswith("models/"):
+            gemini_model = genai.GenerativeModel(model_name=model,
+                                            generation_config=generation_config)
+        else:
+            gemini_model = genai.GenerativeModel(model, generation_config=generation_config)
+
+        prompt = f"{system_prompt}\n\n{content}"
+        logging.debug(f"Google API Request - Model: {model}, Temperature: {temperature}, Prompt: {prompt[:500]}...") # Log first 500 chars of prompt
+        try:
+            response = gemini_model.generate_content(prompt)
+            logging.debug(f"Google API Response: {response.text}")
+            return response.text
+        except Exception as e:
+            logging.error(f"Error calling Google API: {e}")
+            QMessageBox.critical(self, "Google AI Error", f"Error communicating with Google AI: {e}")
+            return None
+
+    def show_api_settings(self):
+        """Display the API settings dialog."""
+        dialog = APISettingsDialog(self.api_settings) # Pass the settings here
+        # Load the current settings into the dialog
+        dialog.load_settings_for_provider(dialog.provider_combobox.currentText())
+        if dialog.exec_() == QDialog.Accepted:
+            # Reload settings if saved
+            try:
+                self.api_settings = load_api_settings()
+            except Exception as e:
+                logging.error(f"Error reloading API settings after dialog: {e}")
+                QMessageBox.critical(self, "Settings Error", f"Failed to reload API settings: {e}")
+                
+
+    def convert_project_to_text(self, project_path, llm_overview=None):
+        """
+        Converts project files to a single text documentation file, with improved file handling.
+        The output file is placed in a new directory named after the documentation file.
+
+        Args:
+            project_path (str): Path to the project directory
+            llm_overview (str, optional): LLM-generated project overview
+        """
+
+        def get_project_structure(directory):
+            """Creates a string representation of the project directory structure.
+            Args:
+                directory (str): Root directory path
+            Returns:
+                str: Formatted string of project structure"""
+            structure = []
+            base_path = os.path.basename(directory)
+            structure.append(f"{base_path}/")
+
+            for root, dirs, files in os.walk(directory):
+                dirs[:] = [
+                    d for d in dirs if d != "__pycache__" and not d.startswith(".")
+                ]
+
+                rel_path = os.path.relpath(root, directory)
+                if rel_path == ".":
+                    continue
+
+                level = rel_path.count(os.sep) + 1
+                indent = "  " * level
+                folder = os.path.basename(root)
+                structure.append(f"{indent}{folder}/")
+
+                sub_indent = "  " * (level + 1)
+                for file in sorted(files):
+                    if not file.startswith("."):
+                        structure.append(f"{sub_indent}{file}")
+
+            return "\n".join(structure)
+
+        incompatible_files = []
+        incompatible_structure = []
+
+        timestamp = datetime.now().strftime("%d.%m.%Y_%H_%M_%S")
+        base_filename = f"project_documentation_{timestamp}"
+        output_dir = os.path.join(project_path, base_filename)
+        os.makedirs(output_dir, exist_ok=True)
+        output_file_with_timestamp = os.path.join(output_dir, f"{base_filename}.txt")
+
+        # Create individual files for selected files within the documentation folder
+        if self.selected_files_for_compression:
+            output_dir_selected = os.path.join(output_dir, "selected_files_content")
+            os.makedirs(output_dir_selected, exist_ok=True)
+            for file_path in self.selected_files_for_compression:
+                try:
+                    content = self._read_file_content(file_path)  # Use the new method
+                    output_file_name = os.path.basename(file_path) + ".txt"
+                    output_path = os.path.join(output_dir_selected, output_file_name)
+                    with open(output_path, 'w', encoding='utf-8') as outfile:
+                        outfile.write(content)
+                    logging.info(f"Created individual file: {output_path}")
+                except Exception as e:
+                    logging.error(f"Error creating individual file for {file_path}: {e}")
+                    QMessageBox.warning(self, "Error", f"Error creating individual file for {os.path.basename(file_path)}.")
+
+        try:
+            with open(output_file_with_timestamp, "w", encoding="utf-8") as outfile:
+                outfile.write(f"Project Documentation\n")
+                outfile.write(
+                    f"Generated on: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n"
+                )
+
+                if llm_overview:
+                    outfile.write("\n" + "=" * 50 + "\n")
+                    outfile.write("PROJECT GENERAL OVERVIEW:\n")
+                    outfile.write("=" * 50 + "\n\n")
+                    outfile.write(llm_overview + "\n\n")
+
+                outfile.write("=" * 50 + "\n\n")
+                outfile.write("PROJECT STRUCTURE:\n")
+                outfile.write("=" * 20 + "\n")
+                structure = get_project_structure(project_path)
+                outfile.write(structure)
+                outfile.write("\n\n" + "=" * 50 + "\n\n")
+
+                outfile.write("FILES CONTENT:\n")
+                outfile.write("=" * 20 + "\n\n")
+
+                for root, dirs, files in os.walk(project_path):
+                    dirs[:] = [
+                        d for d in dirs if d != "__pycache__" and not d.startswith(".")
+                    ]
+                    for file in files:
+                        if file.startswith("."):
+                            continue
+
+                        file_path = os.path.join(root, file)
+                        rel_path = os.path.relpath(file_path, project_path)
+
+                        if file.endswith((".py", ".json", ".log")):
+                            outfile.write(f"File: {rel_path}\n")
+                            outfile.write("-" * len(f"File: {rel_path}") + "\n\n")
+
+                            try:
+                                content = self._read_file_content(file_path) # Use new method
+                                outfile.write(content)
+                                outfile.write("\n\n" + "=" * 50 + "\n\n")
+                            except Exception as e:
+                                outfile.write(f"Error reading file: {str(e)}\n\n")
+                        else:
+                            incompatible_files.append(rel_path)
+                            level = rel_path.count(os.sep)
+                            indent = "  " * level
+                            incompatible_structure.append(
+                                f"{indent}{os.path.basename(rel_path)}"
+                            )
+
+            if incompatible_files:
+                incompatible_file_path = os.path.join(
+                    output_dir, "incompatible_files.txt"
+                )
+                with open(
+                    incompatible_file_path, "w", encoding="utf-8"
+                ) as incompatible_file:
+                    incompatible_file.write("INCOMPATIBLE FILES STRUCTURE:\n")
+                    incompatible_file.write("=" * 30 + "\n")
+                    incompatible_file.write("\n".join(incompatible_structure))
+                    incompatible_file.write("\n\n")
+                    incompatible_file.write("Incompatible files:\n")
+                    incompatible_file.write("\n".join(incompatible_files))
+
+                QMessageBox.information(
+                    self,
+                    "Info",
+                    "Documentation generated with incompatible files.\n"
+                    f"Details in: {incompatible_file_path}"
+                )
+
+            else:
+                QMessageBox.information(
+                    self,
+                    "Success",
+                    "Documentation generated successfully!\n"
+                    f"Saved to: {output_file_with_timestamp}"
+                )
+
+            return True  # Indicate success
+
+        except Exception as e:
+            QMessageBox.critical(
+                self,
+                "Error",
+                "An error occurred!\n"
+                f"{str(e)}"
+            )
+            return False # Indicate failure
+        
+
+
+
+    def recreate_project_from_text(self, doc_file, project_name, save_location):
+        """
+        Recreates a project structure and files from a documentation text file.
+
+        Args:
+            doc_file (str): Path to the documentation file.
+            project_name (str): Name of the project folder to create.
+            save_location (str): Location where to create the project.
+        """
+        logging.info(
+            f"Recreating project from TXT: {doc_file}, Project Name: {project_name}, Save Location: {save_location}"
+        )
+        project_path = os.path.join(save_location, project_name)
+
+        try:
+            with open(doc_file, "r", encoding="utf-8") as f:
+                content = f.read()
+
+            structure_start = (
+                content.find("PROJECT STRUCTURE:\n")
+                + len("PROJECT STRUCTURE:\n")
+                + len("=" * 20 + "\n")
+            )
+            structure_end = content.find("\n\n" + "=" * 50, structure_start)
+            structure_section = content[structure_start:structure_end].strip()
+
+            current_dir_stack = []
+            for line in structure_section.split("\n"):
+                stripped_line = line.strip()
+                indent_level = (len(line) - len(stripped_line)) // 2
+                logging.info(
+                    f"Processing line: '{line}', Stripped: '{stripped_line}', Indent Level: {indent_level}"
+                )
+
+                while len(current_dir_stack) > indent_level:
+                    current_dir_stack.pop()
+
+                if stripped_line.endswith("/"):
+                    dir_name = stripped_line.rstrip("/")
+                    current_dir_stack.append(dir_name)
+                    if indent_level == 0:
+                        continue
+                    dir_path = os.path.join(project_path, *current_dir_stack)
+                    logging.info(f"Creating directory: {dir_path}")
+                    os.makedirs(dir_path, exist_ok=True)
+                else:
+                    file_path = os.path.join(project_path, *current_dir_stack, stripped_line)
+                    logging.info(f"Creating file: {file_path}")
+                    os.makedirs(os.path.dirname(file_path), exist_ok=True)
+                    Path(file_path).touch()  # Create empty file
+
+            files_section = content[content.find("FILES CONTENT:\n") :]
+            current_file = None
+            current_content = []
+            in_file_content = False
+
+            for line in files_section.split("\n"):
+                if line.startswith("File: "):
+                    if current_file and current_content:
+                        file_path = os.path.join(project_path, current_file)
+                        logging.info(f"Writing content to file: {file_path}")
+                        try:
+                            os.makedirs(os.path.dirname(file_path), exist_ok=True)
+                        except FileExistsError:
+                            logging.warning(f"Directory already exists: {os.path.dirname(file_path)}")
+
+                        content_str = "\n".join(current_content).strip()
+                        try:
+                            with open(file_path, "w", encoding="utf-8") as f:
+                                if file_path.endswith(".json"):
+                                    try:
+                                        json_content = json.loads(content_str)
+                                        json.dump(json_content, f, indent=4)
+                                    except json.JSONDecodeError as json_err:
+                                        logging.error(f"JSON decoding error: {json_err}")
+                                        QMessageBox.warning(self,"JSON Error", f"Error in JSON format in file: {current_file}\n{json_err}")
+                                        f.write(content_str)
+                                else:
+                                    f.write(content_str)
+                        except (IOError, OSError) as file_err:
+                            logging.error(f"File writing error: {file_err}")
+                            QMessageBox.critical(self, "File Error", f"Error writing to file: {current_file}\n{file_err}")
+
+                        current_content = []
+
+                    current_file = line[6:].strip()
+                    in_file_content = True
+                elif line.startswith("=" * 50):
+                    in_file_content = False
+                elif line.startswith("-" * len("File: ")):
+                    continue
+                elif in_file_content:
+                    current_content.append(line)
+
+            if current_file and current_content:
+                file_path = os.path.join(project_path, current_file)
+                logging.info(f"Writing content to last file: {file_path}")
+                try:
+                    os.makedirs(os.path.dirname(file_path), exist_ok=True)
+                except FileExistsError:
+                    logging.warning(f"Directory already exists: {os.path.dirname(file_path)}")
+
+                content_str = "\n".join(current_content).strip()
+                try:
+                    with open(file_path, "w", encoding="utf-8") as f:
+                        if file_path.endswith(".json"):
+                            try:
+                                json_content = json.loads(content_str)
+                                json.dump(json_content, f, indent=4)
+                            except json.JSONDecodeError as json_err:
+                                logging.error(f"JSON decoding error: {json_err}")
+                                QMessageBox.warning(self, "JSON Error",
+                                                    f"Error in JSON format in file: {current_file}\n{json_err}")
+                                f.write(content_str)
+                        else:
+                            f.write(content_str)
+                except (IOError, OSError) as file_err:
+                    logging.error(f"File writing error: {file_err}")
+                    QMessageBox.critical(self, "File Error", f"Error writing to file: {current_file}\n{file_err}")
+
+            QMessageBox.information(self, "Success", f"Project recreated successfully at: {project_path}")
+            logging.info(f"Project recreated successfully at: {project_path}")
+
+        except Exception as e:
+            logging.error(f"Error during project recreation: {e}")
+            QMessageBox.critical(self, "Error", f"An error occurred during project recreation: {e}")
+
+    def create_project_documentation(self, project_path, llm_content=None):
+        """
+        Creates detailed project documentation in DOCX format, with improved file handling.
+        The output file is placed in a new directory named after the documentation file.
+
+        Args:
+            project_path (str): Path to the project directory
+            llm_content (str, optional): LLM-generated content to include
+        """
+        logging.info(
+            f"Creating DOCX project documentation for: {project_path}"
+        )
+        timestamp = datetime.now().strftime("%d.%m.%Y_%H_%M_%S")
+        base_filename = f"project_documentation_{timestamp}"
+        output_dir = os.path.join(project_path, base_filename)
+        os.makedirs(output_dir, exist_ok=True)
+        output_file = os.path.join(output_dir, f"{base_filename}.docx")
+        logging.info(f"Output file: {output_file}")
+        doc = Document()
+
+        # Define styles
+        styles = doc.styles
+
+        style_normal = styles["Normal"]
+        style_normal.font.name = "Calibri"
+        style_normal.font.size = Pt(11)
+
+        for level in range(1, 4):
+            style_name = f"Custom Heading {level}"
+            if style_name not in styles:
+                style = styles.add_style(style_name, WD_STYLE_TYPE.PARAGRAPH)
+                style.base_style = styles[f"Heading {level}"]
+                style.font.name = "Calibri"
+                style.font.size = Pt(16 - level)
+                style.font.bold = True
+
+        doc.add_heading("Project Documentation", 0).alignment = WD_ALIGN_PARAGRAPH.CENTER
+        doc.add_paragraph(
+            f'Generated on: {datetime.now().strftime("%Y-%m-%d %H:%M:%S")}'
+        ).alignment = WD_ALIGN_PARAGRAPH.CENTER
+        doc.add_paragraph(f"Project Path: {project_path}").alignment = WD_ALIGN_PARAGRAPH.CENTER
+        doc.add_page_break()
+
+        doc.add_heading("Table of Contents", level=1)
+        doc.add_paragraph("Document sections:", style="List Bullet")
+        sections = [
+            "1. Project Overview",
+            "2. Project Structure",
+            "3. Code and Log Files Documentation",
+            "4. Incompatible Files",
+            "5. Dependencies",
+            "6. Setup Instructions",
+        ]
+        if llm_content:
+            sections.insert(4, "7. LLM Analysis") # Insert before Dependencies
+        for section in sections:
+            doc.add_paragraph(section, style="List Number")
+        doc.add_page_break()
+
+        doc.add_heading("1. Project Overview", level=1)
+        doc.add_paragraph(
+            "This documentation provides a comprehensive overview of the project structure and contents."
+        )
+        doc.add_paragraph("Project Details:", style="Custom Heading 3")
+        project_name = os.path.basename(project_path)
+        details = [
+            f"Project Name: {project_name}",
+            f'Documentation Date: {datetime.now().strftime("%Y-%m-%d")}',
+            f'Number of Python Files: {sum(1 for root, _, files in os.walk(project_path) for file in files if file.endswith(".py"))}',
+            f'Number of Log Files: {sum(1 for root, _, files in os.walk(project_path) for file in files if file.endswith(".log"))}',
+        ]
+        for detail in details:
+            doc.add_paragraph(detail, style="List Bullet")
+
+        doc.add_heading("2. Project Structure", level=1)
+        doc.add_paragraph("Directory structure of the project:", style="Custom Heading 3")
+
+        structure = []
+        incompatible_files = []
+        incompatible_structure = []
+        for root, dirs, files in os.walk(project_path):
+            dirs[:] = [d for d in dirs if d != "__pycache__" and not d.startswith(".")]
+            level = root.replace(project_path, "").count(os.sep)
+            indent = "    " * level
+            folder = os.path.basename(root)
+            structure.append(f"{indent}{folder}/")
+            for file in sorted(files):
+                if not file.startswith("."):
+                    if file.endswith((".py", ".json", ".log")):
+                        structure.append(f"{indent}    {file}")
+                    else:
+                        incompatible_files.append(os.path.relpath(os.path.join(root, file), project_path))
+                        incompatible_structure.append(f"{indent}    {file}")
+        doc.add_paragraph().add_run("\n".join(structure)).font.name = "Courier New"
+
+        # Create individual files for selected files within the documentation folder
+        if self.selected_files_for_compression:
+            output_dir_selected = os.path.join(output_dir, "selected_files_content")
+            os.makedirs(output_dir_selected, exist_ok=True)
+            for file_path in self.selected_files_for_compression:
+                try:
+                    content = self._read_file_content(file_path)  # Use the new method
+                    output_file_name = os.path.basename(file_path) + ".txt"
+                    output_path = os.path.join(output_dir_selected, output_file_name)
+                    with open(output_path, 'w', encoding='utf-8') as outfile:
+                        outfile.write(content)
+                    logging.info(f"Created individual file: {output_path}")
+                except Exception as e:
+                    logging.error(f"Error creating individual file for {file_path}: {e}")
+                    QMessageBox.warning(self, "Error", f"Error creating individual file for {os.path.basename(file_path)}.")
+
+        doc.add_heading("3. Code and Log Files Documentation", level=1)
+
+        for root, _, files in os.walk(project_path):
+            for file in files:
+                if file.endswith((".py", ".log", ".json")) and not file.startswith("."):
+                    file_path = os.path.join(root, file)
+                    rel_path = os.path.relpath(file_path, project_path)
+
+                    doc.add_heading(f"File: {rel_path}", level=2)
+
+                    try:
+                        content = self._read_file_content(file_path)  # Use the new method
+                        p = doc.add_paragraph()
+                        run = p.add_run(content)
+                        run.font.name = "Courier New"
+                        run.font.size = Pt(9)
+                    except Exception as e:
+                        doc.add_paragraph(f"Error reading file: {str(e)}")
+
+                    doc.add_paragraph()
+
+        doc.add_heading("4. Incompatible Files", level=1)
+        if incompatible_files:
+            doc.add_paragraph("List of incompatible files:", style="Custom Heading 3")
+            doc.add_paragraph().add_run("\n".join(incompatible_structure)).font.name = "Courier New"
+            doc.add_paragraph("Incompatible files details:", style="List Bullet")
+            for file_path in incompatible_files:
+                doc.add_paragraph(file_path, style="List Bullet")
+        else:
+            doc.add_paragraph("No incompatible files found.")
+
+        if llm_content:
+            doc.add_heading("7. LLM Analysis", level=1)
+            doc.add_paragraph(llm_content)
+        else:
+            doc.add_paragraph("LLM documentation was not requested for this document.")
+
+        doc.add_heading("5. Dependencies", level=1)
+        doc.add_paragraph("List of potential project dependencies:", style="Custom Heading 3")
+        doc.add_paragraph("To be filled manually with:")
+        dependencies = [
+            "Required Python version",
+            "Required external packages",
+            "System requirements",
+            "Additional software dependencies",
+        ]
+        for dep in dependencies:
+            doc.add_paragraph(dep, style="List Bullet")
+
+        doc.add_heading("6. Setup Instructions", level=1)
+        doc.add_paragraph("Template for setup instructions:", style="Custom Heading 3")
+        instructions = [
+            "Environment setup",
+            "Installation steps",
+            "Configuration requirements",
+            "Running the project",
+            "Testing procedures",
+        ]
+        for instruction in instructions:
+            doc.add_paragraph(instruction, style="List Bullet")
+
+        try:
+            doc.save(output_file)
+            QMessageBox.information(
+                self,
+                "Success",
+                "Documentation generated successfully!\n"
+                f"Saved to: {output_file}"
+            )
+            logging.info(f"DOCX documentation generated successfully at: {output_file}")
+        except Exception as e:
+            QMessageBox.critical(
+                self,
+                "Error",
+                f"An error occurred while saving: {str(e)}"
+            )
+            logging.error(f"Error during DOCX generation: {str(e)}")
+
+    def recreate_project_from_docx(self, doc_file, project_name, save_location):
+            """
+            Recreates a project from a DOCX file by first converting it to TXT.
+
+            Args:
+                doc_file (str): Path to the DOCX documentation file.
+                project_name (str): Name of the project folder to create.
+                save_location (str): Location where to create the project.
+            """
+            logging.info(
+                f"Recreating project from DOCX: {doc_file}, Project Name: {project_name}, Save Location: {save_location}"
+            )
+
+            try:
+                # Convert DOCX to TXT
+                txt_file = self.convert_docx_to_txt(doc_file)
+                if txt_file is None:
+                    logging.error("Failed to convert DOCX to TXT.")
+                    return
+                logging.info(f"DOCX file converted to TXT: {txt_file}")
+
+                # Recreate project from TXT
+                self.recreate_project_from_text(txt_file, project_name, save_location)
+                logging.info(f"Project recreated from TXT: {txt_file}")
+
+            except Exception as e:
+                logging.error(f"Error during project recreation from DOCX: {str(e)}")
+                msg = QMessageBox(self)
+                msg.setIcon(QMessageBox.Critical)
+                msg.setText(f"An error occurred: {str(e)}")
+                msg.setWindowTitle("Error")
+                msg.exec_()
+
+    def convert_docx_to_txt(self, docx_path):
+        """
+        Converts a DOCX file to a TXT file.
+
+        Args:
+            docx_path (str): Path to the DOCX file.
+
+        Returns:
+            str: Path to the converted TXT file, or None if an error occurred.
+        """
+        try:
+            doc = Document(docx_path)
+            txt_path = os.path.join(
+                os.path.dirname(docx_path),
+                os.path.splitext(os.path.basename(docx_path))[0] + ".txt"
+            )
+
+            with open(txt_path, "w", encoding="utf-8") as txt_file:
+                for paragraph in doc.paragraphs:
+                    txt_file.write(paragraph.text + "\n")
+
+            return txt_path
+
+        except Exception as e:
+            logging.error(f"Error converting DOCX to TXT: {str(e)}")
+            return None
+        
+def run_tests():
+    """
+    Runs unit tests for the project.
+    """
+    
+
+    # Create a test suite
+    suite = unittest.TestSuite()
+
+    # Add tests (example test below)
+    suite.addTest(unittest.makeSuite(TestProjectManager))  # Assuming you create a TestProjectManager class
+
+    # Create a test runner and run the tests
+    runner = unittest.TextTestRunner()
+    result = runner.run(suite)
+
+    return result
+
+class TestProjectManager(unittest.TestCase):
+    """
+    Unit tests for the ProjectManagerGUI class.
+    """
+
+    def setUp(self):
+        """
+        Set up test fixtures (if any).
+        """
+        self.app = QApplication(sys.argv)
+        self.main_window = ProjectManagerGUI()
+
+    def tearDown(self):
+        """
+        Tear down test fixtures (if any).
+        """
+        self.main_window.close()
+        self.app.quit()
+
+    def test_select_folder(self):
+        """
+        Test the select_folder method.
+        """
+        # Simulate selecting a folder using QFileDialog (you might need to mock this)
+        # ... (Implementation depends on how you want to simulate user interaction)
+
+        # For example, you could directly call select_folder with a known path (for testing purposes):
+        test_folder = os.path.join(os.path.dirname(__file__), "test_project") # Assumes a "test_project" folder exists
+        if os.path.exists(test_folder):
+            self.main_window.select_folder(test_folder)
+
+            # Assert that the project path is updated correctly
+            self.assertEqual(self.main_window.project_path, test_folder)
+
+            # Assert that the tree view is updated correctly (you might need to check the model)
+            # ...
+        else:
+            print("Warning in test_select_folder: 'test_project' folder not found. Skipping test.")
+
+if __name__ == "__main__":
+    try:
+        # Create and start the application
+        app = QApplication(sys.argv)
+        ex = ProjectManagerGUI()
+        ex.show() # Ensure the main window is shown
+
+        # Run tests if the -t or --test argument is provided
+        if "-t" in sys.argv or "--test" in sys.argv:
+            run_tests()
+        else:
+            sys.exit(app.exec_())
+
+    except Exception as e:
+        logging.critical(f"Unhandled exception during application startup: {e}")
+        # Optionally show a critical error message to the user
+        QMessageBox.critical(None, "Startup Error", f"An unexpected error occurred during startup: {e}")
+        sys.exit(1)
