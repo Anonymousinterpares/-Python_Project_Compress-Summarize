@@ -1,0 +1,16 @@
+{
+    "google": {
+        "api_key": "AIzaSyBtaJErS84G1i3xZl0qbv8_KKxhfbO193E",
+        "temperature": 0.7,
+        "model": "gemini-2.0-flash-exp"
+    },
+    "recent_paths": {
+        "project": "C:/Users/piotr/Documents/AI/projects/RPG PROJECT NEW 28.12.2024_22.46 - skipped - working memory and saves",
+        "doc": "C:/Users/piotr/Documents/AI/projects/bolt.diy/bolt.diy-0.0.3/project_documentation_26.12.2024_23_08_38"
+    },
+    "openai": {
+        "api_key": "sk-Mn79Pst0lRJbE9c3liq-BmS-3Z3stegkvU6YWHqEMzT3BlbkFJ6LaS_nGZtbEFLQUJShpGh14-5jymSomWM62N3HefgA",
+        "temperature": 0.7,
+        "model": "gpt-4o-mini"
+    }
+}

@@ -1,0 +1,14 @@
+{
+    "output_format": "txt",
+    "llm_temperature": 0.7,
+    "recursive_selection": true,
+    "recent_paths": {
+        "project": "C:/Users/piotr/Documents/AI/projects/LLM exchange/working/v4",
+        "doc": ""
+    },
+    "google": {
+        "api_key": "AIzaSyBtaJErS84G1i3xZl0qbv8_KKxhfbO193E",
+        "temperature": 0.7,
+        "model": "gemini-2.0-flash-exp"
+    }
+}
